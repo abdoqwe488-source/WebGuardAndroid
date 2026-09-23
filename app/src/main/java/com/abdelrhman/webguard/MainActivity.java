@@ -221,8 +221,17 @@ public class MainActivity extends Activity {
     private void applyStrongOwnerPolicies() {
         if (!isDeviceOwner()) return;
 
-        dpm.setAlwaysOnVpnPackage(admin, getPackageName(), true);
-        dpm.setUninstallBlocked(admin, getPackageName(), true);
+        try {
+            dpm.setAlwaysOnVpnPackage(admin, getPackageName(), true);
+        } catch (Exception e) {
+            throw new IllegalStateException(
+                    "تعذر تفعيل Always-on VPN: " + e.getMessage(), e);
+        }
+
+        try {
+            dpm.setUninstallBlocked(admin, getPackageName(), true);
+        } catch (Exception ignored) {
+        }
 
         addRestriction(UserManager.DISALLOW_CONFIG_VPN);
         addRestriction(UserManager.DISALLOW_APPS_CONTROL);
