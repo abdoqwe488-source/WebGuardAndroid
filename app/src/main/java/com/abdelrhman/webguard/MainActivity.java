@@ -12,7 +12,6 @@ import android.os.Bundle;
 import android.os.UserManager;
 import android.provider.Settings;
 import android.view.Gravity;
-import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -165,7 +164,10 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             prefs.edit().putBoolean("enabled", false).apply();
             refreshUi();
-            Toast.makeText(this, "تعذر تشغيل الحماية: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(
+                    this,
+                    "تعذر تشغيل الحماية: " + e.getMessage(),
+                    Toast.LENGTH_LONG).show();
         }
     }
 
@@ -251,20 +253,12 @@ public class MainActivity extends Activity {
                 DeviceAdminReceiverImpl.class.getName();
 
         String message =
-                "للحصول على أقوى وضع حماية:
-
-" +
-                "1) ثبّت التطبيق على جهاز مخصص للحماية أو جهاز مؤهل لـ Device Owner.
-" +
-                "2) فعّل USB debugging.
-" +
-                "3) من الكمبيوتر نفّذ الأمر:
-
-" +
+                "للحصول على أقوى وضع حماية:\n\n" +
+                "1) ثبّت التطبيق على جهاز مخصص للحماية أو جهاز مؤهل لـ Device Owner.\n" +
+                "2) فعّل USB debugging.\n" +
+                "3) من الكمبيوتر نفّذ الأمر:\n\n" +
                 command +
-                "
-
-" +
+                "\n\n" +
                 "بعد نجاح Device Owner اضغط «تشغيل البرنامج» ليتم تفعيل Always-on VPN + Lockdown ومنع إعدادات VPN وإلغاء تثبيت التطبيق.";
 
         new AlertDialog.Builder(this)
