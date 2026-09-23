@@ -8,6 +8,8 @@
     <application
         android:theme="@style/AppTheme"
         android:label="@string/app_name"
+        android:icon="@drawable/ic_webguard"
+        android:roundIcon="@drawable/ic_webguard"
         android:allowBackup="false"
         android:supportsRtl="true"
         android:usesCleartextTraffic="false">
