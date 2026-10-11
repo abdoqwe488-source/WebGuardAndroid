@@ -73,15 +73,57 @@ public class FilterVpnService extends VpnService {
                     throw new IllegalStateException("تعذر تشغيل محرك الشبكة");
                 }
 
+                // The JNI call reports thread creation, not tunnel readiness.
+                // Check that the native worker survived configuration parsing.
+                Thread.sleep(900);
+                if (!TProxyService.TProxyIsRunning()) {
+                    throw new IllegalStateException("توقف محرك الشبكة أثناء البدء");
+                }
+
                 running = true;
+                startHealthMonitor();
             } catch (Throwable error) {
                 running = false;
+                getSharedPreferences("settings", MODE_PRIVATE)
+                        .edit().putBoolean("enabled", false)
+                        .putString("last_error", error.getMessage() == null
+                                ? "تعذر بدء نفق الشبكة" : error.getMessage())
+                        .apply();
                 stopTunnel();
+                stopForeground(true);
+                stopSelf();
             }
         }, "WebGuard-Tunnel");
 
         starter.setDaemon(true);
         starter.start();
+    }
+
+    private void startHealthMonitor() {
+        Thread monitor = new Thread(() -> {
+            while (running) {
+                try {
+                    Thread.sleep(2000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+
+                if (!TProxyService.TProxyIsRunning()) {
+                    running = false;
+                    getSharedPreferences("settings", MODE_PRIVATE)
+                            .edit().putBoolean("enabled", false)
+                            .putString("last_error", "توقف محرك الشبكة؛ تم إيقاف VPN لاستعادة الإنترنت")
+                            .apply();
+                    stopTunnel();
+                    stopForeground(true);
+                    stopSelf();
+                    return;
+                }
+            }
+        }, "WebGuard-Tunnel-Monitor");
+        monitor.setDaemon(true);
+        monitor.start();
     }
 
     private File writeHevConfig() throws Exception {
@@ -102,8 +144,8 @@ public class FilterVpnService extends VpnService {
                 "mapdns:\n" +
                 "  address: '198.18.0.2'\n" +
                 "  port: 53\n" +
-                "  network: '240.0.0.0'\n" +
-                "  netmask: '240.0.0.0'\n" +
+                "  network: '100.64.0.0'\n" +
+                "  netmask: '255.192.0.0'\n" +
                 "  cache-size: 10000\n";
 
         File file = new File(getFilesDir(), "hev-tunnel.yml");
