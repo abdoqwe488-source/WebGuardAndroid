@@ -9,7 +9,6 @@ import android.content.Intent;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.UserManager;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.widget.Button;
@@ -146,10 +145,11 @@ public class MainActivity extends Activity {
 
     private void enableProtection() {
         try {
-            prefs.edit().putBoolean("enabled", true).apply();
+            prefs.edit().putBoolean("enabled", true).remove("last_error").apply();
 
             if (isDeviceOwner()) {
-                applyStrongOwnerPolicies();
+                // Device-wide Lockdown is applied by the service only after
+                // the tunnel has passed its startup checks.
                 startVpnService();
                 return;
             }
@@ -218,43 +218,6 @@ public class MainActivity extends Activity {
         return dpm != null && dpm.isDeviceOwnerApp(getPackageName());
     }
 
-    private void applyStrongOwnerPolicies() {
-        if (!isDeviceOwner()) return;
-
-        try {
-            dpm.setAlwaysOnVpnPackage(admin, getPackageName(), true);
-        } catch (Exception e) {
-            throw new IllegalStateException(
-                    "تعذر تفعيل Always-on VPN: " + e.getMessage(), e);
-        }
-
-        try {
-            dpm.setUninstallBlocked(admin, getPackageName(), true);
-        } catch (Exception ignored) {
-        }
-
-        addRestriction(UserManager.DISALLOW_CONFIG_VPN);
-        addRestriction(UserManager.DISALLOW_APPS_CONTROL);
-        addRestriction(UserManager.DISALLOW_SAFE_BOOT);
-        addRestriction(UserManager.DISALLOW_FACTORY_RESET);
-
-        if (Build.VERSION.SDK_INT >= 24) {
-            addRestriction(UserManager.DISALLOW_ADD_USER);
-            addRestriction(UserManager.DISALLOW_USER_SWITCH);
-        }
-
-        if (Build.VERSION.SDK_INT >= 29) {
-            addRestriction(UserManager.DISALLOW_CONFIG_PRIVATE_DNS);
-        }
-    }
-
-    private void addRestriction(String restriction) {
-        try {
-            dpm.addUserRestriction(admin, restriction);
-        } catch (Exception ignored) {
-        }
-    }
-
     private void showDeviceOwnerInstructions() {
         String command =
                 "adb shell dpm set-device-owner " +
@@ -283,9 +246,14 @@ public class MainActivity extends Activity {
         if (status == null) return;
 
         boolean enabled = prefs.getBoolean("enabled", false);
-        status.setText(enabled
+        String state = enabled
                 ? "الحالة: الحماية مفعلة"
-                : "الحالة: الحماية متوقفة");
+                : "الحالة: الحماية متوقفة";
+        String lastError = prefs.getString("last_error", "");
+        if (!lastError.isEmpty()) {
+            state += "\nآخر ملاحظة: " + lastError;
+        }
+        status.setText(state);
 
         stats.setText(
                 "عدد النطاقات المحظورة: " + DomainBlocker.size(this) +
