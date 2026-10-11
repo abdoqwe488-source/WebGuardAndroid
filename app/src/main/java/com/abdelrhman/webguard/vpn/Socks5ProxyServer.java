@@ -260,105 +260,128 @@ public final class Socks5ProxyServer {
             Socket control,
             OutputStream output) {
 
-        DatagramSocket udp = null;
-        AtomicBoolean closed = new AtomicBoolean(false);
+        DatagramSocket relay = null;
+        DatagramSocket upstream = null;
+        java.util.concurrent.atomic.AtomicBoolean alive =
+                new java.util.concurrent.atomic.AtomicBoolean(true);
+        java.util.concurrent.ConcurrentMap<String, InetSocketAddress> clients =
+                new java.util.concurrent.ConcurrentHashMap<>();
 
         try {
-            udp = new DatagramSocket(
-                    new InetSocketAddress("127.0.0.1", 0));
+            // SOCKS5 relay endpoint: local-only and intentionally not protected.
+            relay = new DatagramSocket(null);
+            relay.setReuseAddress(true);
+            relay.bind(new InetSocketAddress(
+                    InetAddress.getByName("127.0.0.1"), 0));
+            relay.setSoTimeout(1000);
 
-            if (!vpn.protect(udp)) {
-                throw new IOException(
-                        "Could not protect outbound UDP socket");
+            // Separate protected socket for actual Internet UDP traffic.
+            upstream = new DatagramSocket();
+            if (!vpn.protect(upstream)) {
+                throw new IOException("Could not protect outbound UDP socket");
             }
+            upstream.setSoTimeout(1000);
 
-            final DatagramSocket socket = udp;
+            final DatagramSocket localRelay = relay;
+            final DatagramSocket remoteSocket = upstream;
 
             sendReply(
                     output,
                     0x00,
-                    socket.getLocalAddress().getAddress(),
-                    socket.getLocalPort());
+                    localRelay.getLocalAddress().getAddress(),
+                    localRelay.getLocalPort());
 
-            InetSocketAddress clientAddress = null;
+            Thread responseReader = new Thread(() -> {
+                byte[] responseBuffer = new byte[65535];
+
+                while (running && alive.get() && !control.isClosed()) {
+                    try {
+                        DatagramPacket response = new DatagramPacket(
+                                responseBuffer, responseBuffer.length);
+                        remoteSocket.receive(response);
+
+                        String key = endpointKey(
+                                response.getAddress(), response.getPort());
+                        InetSocketAddress clientAddress = clients.get(key);
+                        if (clientAddress == null) {
+                            continue;
+                        }
+
+                        byte[] wrapped = wrapUdpResponse(response);
+                        DatagramPacket back = new DatagramPacket(
+                                wrapped, wrapped.length,
+                                clientAddress.getAddress(), clientAddress.getPort());
+                        localRelay.send(back);
+                    } catch (SocketTimeoutException ignored) {
+                        // Periodically check that the SOCKS TCP association remains alive.
+                    } catch (Exception e) {
+                        if (alive.get() && running && !control.isClosed()) {
+                            // Ignore one failed UDP exchange; keep other traffic alive.
+                        }
+                    }
+                }
+            }, "WebGuard-SOCKS-UDP-Receiver");
+
+            responseReader.setDaemon(true);
+            responseReader.start();
+
             byte[] buffer = new byte[65535];
+            while (running && alive.get() && !control.isClosed()) {
+                try {
+                    DatagramPacket packet =
+                            new DatagramPacket(buffer, buffer.length);
+                    localRelay.receive(packet);
 
-            while (running &&
-                    !control.isClosed() &&
-                    !closed.get()) {
-
-                DatagramPacket packet =
-                        new DatagramPacket(buffer, buffer.length);
-
-                socket.receive(packet);
-
-                UdpRequest request =
-                        parseUdpRequest(packet.getData(), packet.getLength());
-
-                if (request == null) {
-                    continue;
-                }
-
-                if (request.domain != null &&
-                        DomainBlocker.isBlocked(context, request.domain)) {
-                    BlockLog.record(context, request.domain);
-                    continue;
-                }
-
-                InetAddress target;
-
-                if (request.domain != null) {
-                    InetAddress[] addresses =
-                            dns.resolve(request.domain);
-
-                    if (addresses.length == 0) {
+                    // Only accept UDP association packets from this device's loopback.
+                    if (!packet.getAddress().isLoopbackAddress()) {
                         continue;
                     }
 
-                    target = addresses[0];
-                } else {
-                    target = request.address;
-                }
-
-                socket.send(new DatagramPacket(
-                        request.payload,
-                        request.payload.length,
-                        target,
-                        request.port));
-
-                clientAddress = new InetSocketAddress(
-                        packet.getAddress(),
-                        packet.getPort());
-
-                socket.setSoTimeout(1200);
-
-                try {
-                    DatagramPacket response =
-                            new DatagramPacket(buffer, buffer.length);
-                    socket.receive(response);
-
-                    if (clientAddress != null) {
-                        byte[] wrapped =
-                                wrapUdpResponse(response);
-
-                        socket.send(new DatagramPacket(
-                                wrapped,
-                                wrapped.length,
-                                clientAddress.getAddress(),
-                                clientAddress.getPort()));
+                    UdpRequest request = parseUdpRequest(
+                            packet.getData(), packet.getLength());
+                    if (request == null) {
+                        continue;
                     }
+
+                    if (request.domain != null &&
+                            DomainBlocker.isBlocked(context, request.domain)) {
+                        BlockLog.record(context, request.domain);
+                        continue;
+                    }
+
+                    InetAddress target;
+                    if (request.domain != null) {
+                        InetAddress[] addresses = dns.resolve(request.domain);
+                        if (addresses.length == 0) {
+                            continue;
+                        }
+                        target = addresses[0];
+                    } else {
+                        target = request.address;
+                    }
+
+                    clients.put(
+                            endpointKey(target, request.port),
+                            new InetSocketAddress(packet.getAddress(), packet.getPort()));
+
+                    DatagramPacket outbound = new DatagramPacket(
+                            request.payload, request.payload.length,
+                            target, request.port);
+                    remoteSocket.send(outbound);
                 } catch (SocketTimeoutException ignored) {
-                } finally {
-                    socket.setSoTimeout(0);
+                    // Lets the loop re-check service and control-socket state.
                 }
             }
         } catch (Exception ignored) {
         } finally {
-            closed.set(true);
-            if (udp != null) {
-                udp.close();
-            }
+            alive.set(false);
+            if (relay != null) relay.close();
+            if (upstream != null) upstream.close();
         }
+    }
+
+    private static String endpointKey(InetAddress address, int port) {
+        return address.getHostAddress().toLowerCase(Locale.US) + ":" + port;
     }
 
     private static UdpRequest parseUdpRequest(
