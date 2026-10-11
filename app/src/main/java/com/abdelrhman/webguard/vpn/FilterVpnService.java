@@ -46,6 +46,10 @@ public class FilterVpnService extends VpnService {
                 proxy = new Socks5ProxyServer(this, this);
                 proxy.start();
 
+                // Test the protected upstream before taking over the phone's
+                // default route. If it fails, exit without black-holing traffic.
+                proxy.verifyUpstream();
+
                 VpnService.Builder builder = new VpnService.Builder()
                         .setSession("حارس الويب")
                         .setMtu(1500)
@@ -81,6 +85,7 @@ public class FilterVpnService extends VpnService {
                 }
 
                 running = true;
+                applyOwnerPoliciesAfterTunnelIsHealthy();
                 startHealthMonitor();
             } catch (Throwable error) {
                 running = false;
@@ -90,6 +95,7 @@ public class FilterVpnService extends VpnService {
                                 ? "تعذر بدء نفق الشبكة" : error.getMessage())
                         .apply();
                 stopTunnel();
+                clearOwnerPoliciesForRecovery();
                 stopForeground(true);
                 stopSelf();
             }
@@ -97,6 +103,65 @@ public class FilterVpnService extends VpnService {
 
         starter.setDaemon(true);
         starter.start();
+    }
+
+    private void applyOwnerPoliciesAfterTunnelIsHealthy() {
+        android.app.admin.DevicePolicyManager dpm =
+                (android.app.admin.DevicePolicyManager)
+                        getSystemService(DEVICE_POLICY_SERVICE);
+        if (dpm == null || !dpm.isDeviceOwnerApp(getPackageName())) return;
+
+        android.content.ComponentName admin = new android.content.ComponentName(
+                this, com.abdelrhman.webguard.admin.DeviceAdminReceiverImpl.class);
+
+        try {
+            dpm.setAlwaysOnVpnPackage(admin, getPackageName(), true);
+        } catch (Exception e) {
+            getSharedPreferences("settings", MODE_PRIVATE)
+                    .edit().putString("last_error",
+                            "تعذر تفعيل Always-on VPN: " + e.getMessage()).apply();
+        }
+
+        try { dpm.setUninstallBlocked(admin, getPackageName(), true); }
+        catch (Exception ignored) {}
+        try { dpm.addUserRestriction(admin, android.os.UserManager.DISALLOW_CONFIG_VPN); }
+        catch (Exception ignored) {}
+        try { dpm.addUserRestriction(admin, android.os.UserManager.DISALLOW_CONFIG_PRIVATE_DNS); }
+        catch (Exception ignored) {}
+    }
+
+    /**
+     * Fail-open recovery: never leave an always-on Lockdown pointing at a
+     * tunnel that stopped working. Unblock the app and remove restrictions so
+     * the device owner can recover the phone without a factory reset.
+     */
+    private void clearOwnerPoliciesForRecovery() {
+        android.app.admin.DevicePolicyManager dpm =
+                (android.app.admin.DevicePolicyManager)
+                        getSystemService(DEVICE_POLICY_SERVICE);
+        if (dpm == null || !dpm.isDeviceOwnerApp(getPackageName())) return;
+
+        android.content.ComponentName admin = new android.content.ComponentName(
+                this, com.abdelrhman.webguard.admin.DeviceAdminReceiverImpl.class);
+
+        try { dpm.setAlwaysOnVpnPackage(admin, null, false); }
+        catch (Exception ignored) {}
+        try { dpm.setUninstallBlocked(admin, getPackageName(), false); }
+        catch (Exception ignored) {}
+
+        String[] restrictions = {
+                android.os.UserManager.DISALLOW_CONFIG_VPN,
+                android.os.UserManager.DISALLOW_CONFIG_PRIVATE_DNS,
+                android.os.UserManager.DISALLOW_APPS_CONTROL,
+                android.os.UserManager.DISALLOW_SAFE_BOOT,
+                android.os.UserManager.DISALLOW_FACTORY_RESET,
+                android.os.UserManager.DISALLOW_ADD_USER,
+                android.os.UserManager.DISALLOW_USER_SWITCH
+        };
+        for (String restriction : restrictions) {
+            try { dpm.clearUserRestriction(admin, restriction); }
+            catch (Exception ignored) {}
+        }
     }
 
     private void startHealthMonitor() {
@@ -116,6 +181,7 @@ public class FilterVpnService extends VpnService {
                             .putString("last_error", "توقف محرك الشبكة؛ تم إيقاف VPN لاستعادة الإنترنت")
                             .apply();
                     stopTunnel();
+                    clearOwnerPoliciesForRecovery();
                     stopForeground(true);
                     stopSelf();
                     return;
