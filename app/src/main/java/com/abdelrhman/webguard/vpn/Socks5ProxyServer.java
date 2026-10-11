@@ -44,6 +44,17 @@ public final class Socks5ProxyServer {
         this.dns = new DnsClient(vpn);
     }
 
+    /**
+     * Verifies protected outbound DNS before the TUN route takes over the
+     * device. A failed check should leave the normal connection untouched.
+     */
+    public void verifyUpstream() throws IOException {
+        InetAddress[] addresses = dns.resolve("example.com");
+        if (addresses == null || addresses.length == 0) {
+            throw new IOException("لم ينجح اختبار اتصال DNS الخارجي");
+        }
+    }
+
     public synchronized void start() throws IOException {
         if (running) return;
 
