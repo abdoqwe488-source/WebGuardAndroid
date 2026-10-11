@@ -354,6 +354,14 @@ public final class Socks5ProxyServer {
                         continue;
                     }
 
+                    // QUIC / HTTP/3 uses UDP port 443. Some access networks and
+                    // SOCKS UDP relays do not pass QUIC reliably; silently drop
+                    // only this UDP traffic so browsers can retry HTTPS over TCP.
+                    // Ordinary TCP HTTPS (also port 443) is unaffected.
+                    if (request.port == 443) {
+                        continue;
+                    }
+
                     if (request.domain != null &&
                             DomainBlocker.isBlocked(context, request.domain)) {
                         BlockLog.record(context, request.domain);
