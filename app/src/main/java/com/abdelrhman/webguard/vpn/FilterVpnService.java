@@ -15,11 +15,16 @@ import com.wgtunnel.hevtunnel.TProxyService;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
 public class FilterVpnService extends VpnService {
     private static final String CHANNEL_ID = "webguard_protection";
     private static final int NOTIFICATION_ID = 1001;
+    public static final String ACTION_STOP = "com.abdelrhman.webguard.action.STOP_PROTECTION";
 
     private volatile boolean running;
     private ParcelFileDescriptor vpnInterface;
@@ -28,6 +33,16 @@ public class FilterVpnService extends VpnService {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         startForeground(NOTIFICATION_ID, buildNotification());
+
+        if (intent != null && ACTION_STOP.equals(intent.getAction())) {
+            getSharedPreferences("settings", MODE_PRIVATE)
+                    .edit().putBoolean("enabled", false).apply();
+            clearOwnerPoliciesForRecovery();
+            stopTunnel();
+            stopForeground(true);
+            stopSelf(startId);
+            return START_NOT_STICKY;
+        }
 
         if (!running) {
             startTunnel();
@@ -84,6 +99,11 @@ public class FilterVpnService extends VpnService {
                     throw new IllegalStateException("توقف محرك الشبكة أثناء البدء");
                 }
 
+                // A live native worker does not prove that packets are being
+                // forwarded. Test a real app-owned TCP connection through the
+                // newly established VPN before enabling any owner policies.
+                verifyTrafficThroughTunnel();
+
                 running = true;
                 applyOwnerPoliciesAfterTunnelIsHealthy();
                 startHealthMonitor();
@@ -105,6 +125,28 @@ public class FilterVpnService extends VpnService {
         starter.start();
     }
 
+    private void verifyTrafficThroughTunnel() throws IOException {
+        IOException last = null;
+        String[] targets = {"1.1.1.1", "8.8.8.8", "9.9.9.9"};
+
+        for (String target : targets) {
+            try (Socket probe = new Socket()) {
+                // Intentionally do NOT call VpnService.protect(): this probe
+                // must travel through the TUN -> Hev -> local SOCKS path.
+                probe.setTcpNoDelay(true);
+                probe.connect(new InetSocketAddress(
+                        InetAddress.getByName(target), 443), 2500);
+                return;
+            } catch (IOException error) {
+                last = error;
+            }
+        }
+
+        throw new IOException(
+                "اختبار مرور الإنترنت عبر VPN فشل؛ أوقفت الحماية لتجنب قطع اتصال الهاتف",
+                last);
+    }
+
     private void applyOwnerPoliciesAfterTunnelIsHealthy() {
         android.app.admin.DevicePolicyManager dpm =
                 (android.app.admin.DevicePolicyManager)
@@ -115,7 +157,9 @@ public class FilterVpnService extends VpnService {
                 this, com.abdelrhman.webguard.admin.DeviceAdminReceiverImpl.class);
 
         try {
-            dpm.setAlwaysOnVpnPackage(admin, getPackageName(), true);
+            // Keep Always-on restart behavior, but never enable Lockdown:
+            // a tunnel problem must not turn into a device-wide internet outage.
+            dpm.setAlwaysOnVpnPackage(admin, getPackageName(), false);
         } catch (Exception e) {
             getSharedPreferences("settings", MODE_PRIVATE)
                     .edit().putString("last_error",
