@@ -103,8 +103,10 @@ public final class DnsClient {
                     InetAddress.getByName(DOH_IP), 443), 5000);
             plain.setSoTimeout(6000);
 
-            SSLSocket tls = (SSLSocket) SSLSocketFactory.getDefault()
-                    .createSocket(plain, DOH_HOST, 443, true);
+            SSLSocketFactory factory =
+                    (SSLSocketFactory) SSLSocketFactory.getDefault();
+            SSLSocket tls = (SSLSocket) factory.createSocket(
+                    plain, DOH_HOST, 443, true);
 
             try (SSLSocket secure = tls) {
                 SSLParameters parameters = secure.getSSLParameters();
