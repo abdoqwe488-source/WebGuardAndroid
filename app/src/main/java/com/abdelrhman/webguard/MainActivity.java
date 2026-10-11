@@ -197,21 +197,27 @@ public class MainActivity extends Activity {
     }
 
     private void disableProtection() {
-        if (isDeviceOwner()) {
-            new AlertDialog.Builder(this)
-                    .setTitle("الحماية الإدارية مفعلة")
-                    .setMessage(
-                            "هذا الجهاز في وضع Device Owner. إيقاف الحماية من داخل التطبيق غير مسموح في الوضع المقيد. " +
-                            "استخدم حساب الإدارة/إجراء إزالة Device Owner الموثق إذا أردت استعادة التحكم الكامل بالجهاز.")
-                    .setPositiveButton("حسنًا", null)
-                    .show();
-            return;
-        }
-
+        // Always provide an in-app recovery path, including Device Owner mode.
+        // The service clears Always-on VPN, Lockdown-related restrictions and
+        // uninstall blocking before it releases the TUN interface.
         prefs.edit().putBoolean("enabled", false).apply();
-        stopService(new Intent(this, FilterVpnService.class));
+        Intent stop = new Intent(this, FilterVpnService.class);
+        stop.setAction(FilterVpnService.ACTION_STOP);
+        try {
+            if (Build.VERSION.SDK_INT >= 26) {
+                startForegroundService(stop);
+            } else {
+                startService(stop);
+            }
+        } catch (Exception e) {
+            // Also stop directly if Android refused to start the recovery command.
+            stopService(new Intent(this, FilterVpnService.class));
+            Toast.makeText(this,
+                    "تم طلب إيقاف الحماية. إذا بقي رمز VPN ظاهرًا، أوقفه من إعدادات الهاتف.",
+                    Toast.LENGTH_LONG).show();
+        }
         refreshUi();
-        Toast.makeText(this, "تم إيقاف الحماية", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "جارٍ إيقاف الحماية واستعادة الاتصال...", Toast.LENGTH_SHORT).show();
     }
 
     private boolean isDeviceOwner() {
@@ -265,7 +271,7 @@ public class MainActivity extends Activity {
         }
 
         if (stopButton != null) {
-            stopButton.setEnabled(enabled && !isDeviceOwner());
+            stopButton.setEnabled(enabled);
         }
     }
 }
