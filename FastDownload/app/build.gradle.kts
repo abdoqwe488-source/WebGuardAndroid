@@ -8,8 +8,15 @@ android {
     defaultConfig {
         applicationId = "com.fastdownload.app"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 34
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "0.1.1"
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+    kotlinOptions {
+        jvmTarget = "1.8"
     }
 }
