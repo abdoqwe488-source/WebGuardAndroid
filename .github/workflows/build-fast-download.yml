@@ -11,9 +11,6 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      ANDROID_HOME: /usr/local/lib/android/sdk
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -22,19 +19,10 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - name: Configure Android SDK
-        shell: bash
-        run: |
-          echo "Android SDK: $ANDROID_HOME"
-          find "$ANDROID_HOME/cmdline-tools" -maxdepth 4 -type f -name sdkmanager -print
-          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n1)"
-          if [ -z "$SDKMANAGER" ]; then
-            echo "sdkmanager was not found in $ANDROID_HOME"
-            exit 1
-          fi
-          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
