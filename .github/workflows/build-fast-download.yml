@@ -32,6 +32,9 @@ jobs:
           cat FastDownload-source.tgz.part0 FastDownload-source.tgz.part1 FastDownload-source.tgz.part2 FastDownload-source.tgz.part3 FastDownload-source.tgz.part4 > FastDownload-source.tgz
           mkdir -p FastDownload
           tar -xzf FastDownload-source.tgz -C FastDownload
+      - name: Apply Kotlin layout fix
+        run: |
+          sed -i 's/TextInputLayout\.LayoutParams/LinearLayout.LayoutParams/g' FastDownload/app/src/main/java/com/fastdownload/app/MainActivity.kt
       - name: Build debug APK
         run: gradle --no-daemon -p FastDownload assembleDebug
       - name: Upload APK
