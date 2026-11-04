@@ -32,14 +32,23 @@ jobs:
           cat FastDownload-source.tgz.part0 FastDownload-source.tgz.part1 FastDownload-source.tgz.part2 FastDownload-source.tgz.part3 FastDownload-source.tgz.part4 > FastDownload-source.tgz
           mkdir -p FastDownload
           tar -xzf FastDownload-source.tgz -C FastDownload
-      - name: Apply Kotlin layout fix
+      - name: Apply Android compatibility and size fixes
         run: |
           sed -i 's/TextInputLayout\.LayoutParams/LinearLayout.LayoutParams/g' FastDownload/app/src/main/java/com/fastdownload/app/MainActivity.kt
+          sed -i "s/abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'/abiFilters 'armeabi-v7a', 'arm64-v8a'/" FastDownload/app/build.gradle
       - name: Build debug APK
         run: gradle --no-daemon -p FastDownload assembleDebug
+      - name: Verify APK signature
+        shell: bash
+        run: |
+          APK="FastDownload/app/build/outputs/apk/debug/app-debug.apk"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n1)"
+          test -n "$APKSIGNER"
+          "$APKSIGNER" verify --verbose "$APK"
+          ls -lh "$APK"
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: FastDownload-debug-apk
+          name: FastDownload-debug-apk-arm
           path: FastDownload/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
