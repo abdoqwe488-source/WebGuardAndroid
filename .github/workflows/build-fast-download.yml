@@ -5,7 +5,7 @@ on:
     branches: ["fast-download-build"]
     paths:
       - ".github/workflows/build-fast-download.yml"
-      - "FastDownload-v1.1.0.tar.xz.b64.part*"
+      - "FastDownload-v1.1.1-source.tar.xz.b64.part*"
   workflow_dispatch:
 
 permissions:
@@ -33,15 +33,16 @@ jobs:
       - name: Reassemble updated source archive
         shell: bash
         run: |
-          cat FastDownload-v1.1.0.tar.xz.b64.part0 FastDownload-v1.1.0.tar.xz.b64.part1 FastDownload-v1.1.0.tar.xz.b64.part2 FastDownload-v1.1.0.tar.xz.b64.part3 FastDownload-v1.1.0.tar.xz.b64.part4 FastDownload-v1.1.0.tar.xz.b64.part5 FastDownload-v1.1.0.tar.xz.b64.part6 FastDownload-v1.1.0.tar.xz.b64.part7 > FastDownload-v1.1.0.tar.xz.b64
-          base64 --decode FastDownload-v1.1.0.tar.xz.b64 > FastDownload-v1.1.0.tar.xz
+          cat FastDownload-v1.1.1-source.tar.xz.b64.part0 FastDownload-v1.1.1-source.tar.xz.b64.part1 FastDownload-v1.1.1-source.tar.xz.b64.part2 FastDownload-v1.1.1-source.tar.xz.b64.part3 FastDownload-v1.1.1-source.tar.xz.b64.part4 FastDownload-v1.1.1-source.tar.xz.b64.part5 FastDownload-v1.1.1-source.tar.xz.b64.part6 > FastDownload-v1.1.1-source.tar.xz.b64
+          base64 --decode FastDownload-v1.1.1-source.tar.xz.b64 > FastDownload-v1.1.1-source.tar.xz
           mkdir -p FastDownload
-          tar -xJf FastDownload-v1.1.0.tar.xz -C FastDownload
+          tar -xJf FastDownload-v1.1.1-source.tar.xz -C FastDownload
           test -f FastDownload/app/build.gradle
-      - name: Apply Android compatibility and size fixes
+      - name: Apply Android compatibility and release metadata fixes
         run: |
           sed -i 's/TextInputLayout\.LayoutParams/LinearLayout.LayoutParams/g' FastDownload/app/src/main/java/com/fastdownload/app/MainActivity.kt
           sed -i "s/abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'/abiFilters 'armeabi-v7a', 'arm64-v8a'/" FastDownload/app/build.gradle
+          sed -i "s/versionCode 2/versionCode 3/; s/versionName '1.1.0'/versionName '1.1.1'/" FastDownload/app/build.gradle
       - name: Build debug APK
         run: gradle --no-daemon -p FastDownload assembleDebug
       - name: Verify APK signature
@@ -55,6 +56,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: FastDownload-1.1.0-debug-apk-arm
+          name: FastDownload-1.1.1-debug-apk-arm
           path: FastDownload/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
