@@ -8,6 +8,10 @@ on:
       - "FastDownload-v1.1.1-source.tar.xz.b64.part*"
   workflow_dispatch:
 
+concurrency:
+  group: fast-download-apk-build
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -35,8 +39,7 @@ jobs:
         run: |
           cat FastDownload-v1.1.1-source.tar.xz.b64.part0 FastDownload-v1.1.1-source.tar.xz.b64.part1 FastDownload-v1.1.1-source.tar.xz.b64.part2 FastDownload-v1.1.1-source.tar.xz.b64.part3 FastDownload-v1.1.1-source.tar.xz.b64.part4 FastDownload-v1.1.1-source.tar.xz.b64.part5 FastDownload-v1.1.1-source.tar.xz.b64.part6 > FastDownload-v1.1.1-source.tar.xz.b64
           base64 --decode FastDownload-v1.1.1-source.tar.xz.b64 > FastDownload-v1.1.1-source.tar.xz
-          mkdir -p FastDownload
-          tar -xJf FastDownload-v1.1.1-source.tar.xz -C FastDownload
+          tar -xJf FastDownload-v1.1.1-source.tar.xz -C .
           test -f FastDownload/app/build.gradle
       - name: Apply Android compatibility and release metadata fixes
         run: |
