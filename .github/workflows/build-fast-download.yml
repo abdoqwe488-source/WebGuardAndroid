@@ -41,11 +41,51 @@ jobs:
           base64 --decode FastDownload-v1.1.1-source.tar.xz.b64 > FastDownload-v1.1.1-source.tar.xz
           tar -xJf FastDownload-v1.1.1-source.tar.xz -C .
           test -f FastDownload/app/build.gradle
-      - name: Apply Android compatibility and release metadata fixes
+      - name: Apply Android compatibility, size, and metadata fixes
+        shell: bash
         run: |
           sed -i 's/TextInputLayout\.LayoutParams/LinearLayout.LayoutParams/g' FastDownload/app/src/main/java/com/fastdownload/app/MainActivity.kt
           sed -i "s/abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'/abiFilters 'armeabi-v7a', 'arm64-v8a'/" FastDownload/app/build.gradle
           sed -i "s/versionCode 2/versionCode 3/; s/versionName '1.1.0'/versionName '1.1.1'/" FastDownload/app/build.gradle
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("FastDownload/app/src/main/java/com/fastdownload/app/MainActivity.kt")
+          s = p.read_text()
+          s = s.replace(
+              'FormatOption(id, "صوت ${rate.coerceAtLeast(0)} kbps • ${format.ext ?: "audio"}", size, approx, true, true)',
+              '// The selected source audio is transcoded to MP3, so final size is only an estimate.\n                    FormatOption(id, "صوت ${rate.coerceAtLeast(0)} kbps • ${format.ext ?: "audio"}", size, true, true, true)'
+          )
+          s = s.replace(
+              'FormatOption(id, label, combined.first, combined.second, hasAudio, false)',
+              '// Non-MP4 sources are recoded to MP4; their final size may differ from the source stream.\n                FormatOption(id, label, combined.first, combined.second || !format.ext.equals("mp4", ignoreCase = true), hasAudio, false)'
+          )
+          old = '''        if (result.length() <= 0L) throw IllegalStateException("الملف الناتج فارغ.")
+                  withContext(Dispatchers.IO) {
+                      saveToDownloads(result, targetName, replace)
+                  }
+                  result.delete()
+                  return true
+          '''
+          new = '''        val finalSizeBytes = result.length()
+                  if (finalSizeBytes <= 0L) throw IllegalStateException("الملف الناتج فارغ.")
+                  withContext(Dispatchers.IO) {
+                      saveToDownloads(result, targetName, replace)
+                  }
+                  result.delete()
+                  if (queueTotal == 1) {
+                      withContext(Dispatchers.Main) {
+                          Toast.makeText(this@MainActivity, "الحجم الفعلي للملف: ${formatBytes(finalSizeBytes)}", Toast.LENGTH_LONG).show()
+                      }
+                  }
+                  return true
+          '''
+          if old in s:
+              s = s.replace(old, new)
+          elif "الحجم الفعلي للملف:" not in s:
+              raise SystemExit("Could not apply actual output-size patch; refusing to build.")
+          s = s.replace('            addOption("--no-cache-dir")\n', '')
+          p.write_text(s)
+          PY
       - name: Build debug APK
         run: gradle --no-daemon -p FastDownload assembleDebug
       - name: Verify APK signature
