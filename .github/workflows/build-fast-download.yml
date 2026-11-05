@@ -51,38 +51,26 @@ jobs:
           from pathlib import Path
           p = Path("FastDownload/app/src/main/java/com/fastdownload/app/MainActivity.kt")
           s = p.read_text()
-          s = s.replace(
-              'FormatOption(id, "صوت ${rate.coerceAtLeast(0)} kbps • ${format.ext ?: "audio"}", size, approx, true, true)',
-              '// The selected source audio is transcoded to MP3, so final size is only an estimate.\n                    FormatOption(id, "صوت ${rate.coerceAtLeast(0)} kbps • ${format.ext ?: "audio"}", size, true, true, true)'
-          )
-          s = s.replace(
-              'FormatOption(id, label, combined.first, combined.second, hasAudio, false)',
-              '// Non-MP4 sources are recoded to MP4; their final size may differ from the source stream.\n                FormatOption(id, label, combined.first, combined.second || !format.ext.equals("mp4", ignoreCase = true), hasAudio, false)'
-          )
-          old = '''        if (result.length() <= 0L) throw IllegalStateException("الملف الناتج فارغ.")
-                  withContext(Dispatchers.IO) {
-                      saveToDownloads(result, targetName, replace)
-                  }
-                  result.delete()
-                  return true
-          '''
-          new = '''        val finalSizeBytes = result.length()
-                  if (finalSizeBytes <= 0L) throw IllegalStateException("الملف الناتج فارغ.")
-                  withContext(Dispatchers.IO) {
-                      saveToDownloads(result, targetName, replace)
-                  }
-                  result.delete()
-                  if (queueTotal == 1) {
-                      withContext(Dispatchers.Main) {
-                          Toast.makeText(this@MainActivity, "الحجم الفعلي للملف: ${formatBytes(finalSizeBytes)}", Toast.LENGTH_LONG).show()
-                      }
-                  }
-                  return true
-          '''
-          if old in s:
-              s = s.replace(old, new)
-          elif "الحجم الفعلي للملف:" not in s:
-              raise SystemExit("Could not apply actual output-size patch; refusing to build.")
+          old_audio = 'FormatOption(id, "صوت ${rate.coerceAtLeast(0)} kbps • ${format.ext ?: "audio"}", size, approx, true, true)'
+          new_audio = '// The source audio is transcoded to MP3; final size is approximate.\n                    FormatOption(id, "صوت ${rate.coerceAtLeast(0)} kbps • ${format.ext ?: "audio"}", size, true, true, true)'
+          if old_audio in s:
+              s = s.replace(old_audio, new_audio, 1)
+          old_video = 'FormatOption(id, label, combined.first, combined.second, hasAudio, false)'
+          new_video = '// Non-MP4 sources are recoded to MP4; final size may differ.\n                FormatOption(id, label, combined.first, combined.second || !format.ext.equals("mp4", ignoreCase = true), hasAudio, false)'
+          if old_video in s:
+              s = s.replace(old_video, new_video, 1)
+          needle = '        if (result.length() <= 0L) throw IllegalStateException("الملف الناتج فارغ.")'
+          replacement = '        val finalSizeBytes = result.length()\n        if (finalSizeBytes <= 0L) throw IllegalStateException("الملف الناتج فارغ.")'
+          if needle in s:
+              s = s.replace(needle, replacement, 1)
+          if '        val finalSizeBytes = result.length()' not in s:
+              raise SystemExit("Actual-size calculation patch did not apply.")
+          needle2 = '        result.delete()\n        return true'
+          replacement2 = '        result.delete()\n        if (queueTotal == 1) {\n            withContext(Dispatchers.Main) {\n                Toast.makeText(this@MainActivity, "الحجم الفعلي للملف: ${formatBytes(finalSizeBytes)}", Toast.LENGTH_LONG).show()\n            }\n        }\n        return true'
+          if needle2 in s:
+              s = s.replace(needle2, replacement2, 1)
+          if 'الحجم الفعلي للملف:' not in s:
+              raise SystemExit("Actual-size message patch did not apply.")
           s = s.replace('            addOption("--no-cache-dir")\n', '')
           p.write_text(s)
           PY
