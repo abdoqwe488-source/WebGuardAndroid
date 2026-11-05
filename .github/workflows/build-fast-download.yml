@@ -1,14 +1,60 @@
 name: Build Fast Download APK
 
 on:
+  push:
+    branches: ["fast-download-build"]
+    paths:
+      - ".github/workflows/build-fast-download.yml"
+      - "FastDownload-v1.1.0.tar.xz.b64.part*"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  prepare:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Prepare updated source
-        run: echo "Source archive update in progress."
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - name: Reassemble updated source archive
+        shell: bash
+        run: |
+          cat FastDownload-v1.1.0.tar.xz.b64.part0 FastDownload-v1.1.0.tar.xz.b64.part1 FastDownload-v1.1.0.tar.xz.b64.part2 FastDownload-v1.1.0.tar.xz.b64.part3 FastDownload-v1.1.0.tar.xz.b64.part4 FastDownload-v1.1.0.tar.xz.b64.part5 FastDownload-v1.1.0.tar.xz.b64.part6 FastDownload-v1.1.0.tar.xz.b64.part7 > FastDownload-v1.1.0.tar.xz.b64
+          base64 --decode FastDownload-v1.1.0.tar.xz.b64 > FastDownload-v1.1.0.tar.xz
+          mkdir -p FastDownload
+          tar -xJf FastDownload-v1.1.0.tar.xz -C FastDownload
+          test -f FastDownload/app/build.gradle
+      - name: Apply Android compatibility and size fixes
+        run: |
+          sed -i 's/TextInputLayout\.LayoutParams/LinearLayout.LayoutParams/g' FastDownload/app/src/main/java/com/fastdownload/app/MainActivity.kt
+          sed -i "s/abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'/abiFilters 'armeabi-v7a', 'arm64-v8a'/" FastDownload/app/build.gradle
+      - name: Build debug APK
+        run: gradle --no-daemon -p FastDownload assembleDebug
+      - name: Verify APK signature
+        shell: bash
+        run: |
+          APK="FastDownload/app/build/outputs/apk/debug/app-debug.apk"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n1)"
+          test -n "$APKSIGNER"
+          "$APKSIGNER" verify --verbose "$APK"
+          ls -lh "$APK"
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FastDownload-1.1.0-debug-apk-arm
+          path: FastDownload/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
