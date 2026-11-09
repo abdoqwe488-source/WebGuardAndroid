@@ -41,18 +41,12 @@ jobs:
           base64 --decode FastDownload-v1.1.1-source.tar.xz.b64 > FastDownload-v1.1.1-source.tar.xz
           tar -xJf FastDownload-v1.1.1-source.tar.xz -C .
           test -f FastDownload/app/build.gradle
-      - name: Upload reconstructed source for diagnosis
-        uses: actions/upload-artifact@v4
-        with:
-          name: FastDownload-source-diagnostic
-          path: FastDownload/
-          retention-days: 1
       - name: Apply Android compatibility, size, and metadata fixes
         shell: bash
         run: |
           sed -i 's/TextInputLayout\.LayoutParams/LinearLayout.LayoutParams/g' FastDownload/app/src/main/java/com/fastdownload/app/MainActivity.kt
           sed -i "s/abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'/abiFilters 'armeabi-v7a', 'arm64-v8a'/" FastDownload/app/build.gradle
-          sed -i "s/versionCode 2/versionCode 3/; s/versionName '1.1.0'/versionName '1.1.1'/" FastDownload/app/build.gradle
+          sed -i "s/versionCode 2/versionCode 4/; s/versionName '1.1.0'/versionName '1.1.2'/" FastDownload/app/build.gradle
           python3 - <<'PY'
           from pathlib import Path
           p = Path("FastDownload/app/src/main/java/com/fastdownload/app/MainActivity.kt")
@@ -80,6 +74,74 @@ jobs:
           s = s.replace('            addOption("--no-cache-dir")\n', '')
           p.write_text(s)
           PY
+      - name: Fix video format selection and reject audio-only output
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("FastDownload/app/src/main/java/com/fastdownload/app/MainActivity.kt")
+          s = p.read_text()
+          old_selector = '''                val selector = if (format == null || format.id == "best") {
+                    "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4]/best"
+                } else if (format.hasAudio) {
+                    "${format.id}/best[ext=mp4]/best"
+                } else {
+                    "${format.id}+bestaudio[ext=m4a]/${format.id}+bestaudio"
+                }'''
+          new_selector = '''                // Video mode must never fall back to an audio-only format.
+                val selector = if (format == null || format.id == "best") {
+                    "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4][vcodec!=none]/best[vcodec!=none]"
+                } else if (format.hasAudio) {
+                    "${format.id}"
+                } else {
+                    // Keep the selected video even when a separate audio stream is unavailable.
+                    "${format.id}+bestaudio/${format.id}"
+                }'''
+          if old_selector not in s:
+              raise SystemExit("Video format selector patch did not match the source.")
+          s = s.replace(old_selector, new_selector, 1)
+
+          old_result = '''        val expectedExtension = if (audio) "mp3" else "mp4"
+        var result = File(tempDir, "$baseName.$expectedExtension")
+        if (!result.exists()) {
+            result = tempDir.listFiles()
+                ?.filter { it.isFile && it.lastModified() >= downloadStartedAt && !it.name.endsWith(".part") && !it.name.endsWith(".ytdl") }
+                ?.maxByOrNull { it.lastModified() }
+                ?: throw IllegalStateException("اكتمل أمر التنزيل لكن لم يتم العثور على الملف الناتج.")
+        }
+        if (result.length() <= 0L) throw IllegalStateException("الملف الناتج فارغ.")'''
+          new_result = '''        val expectedExtension = if (audio) "mp3" else "mp4"
+        val candidates = tempDir.listFiles()
+            ?.filter {
+                it.isFile && it.lastModified() >= downloadStartedAt &&
+                    !it.name.endsWith(".part") && !it.name.endsWith(".ytdl") && it.length() > 0L
+            }
+            .orEmpty()
+        // Never rename an audio-only .m4a/.webm file to .mp4: accept only the expected final container.
+        val result = candidates
+            .filter { it.extension.equals(expectedExtension, ignoreCase = true) }
+            .maxByOrNull { it.lastModified() }
+            ?: run {
+                val found = candidates.joinToString { it.name }.ifBlank { "لا توجد ملفات مكتملة" }
+                val message = if (audio) {
+                    "تعذر إنشاء ملف MP3 بعد التحويل. الملفات المؤقتة: $found"
+                } else {
+                    "لم يتم إنشاء فيديو MP4 يحتوي على الصورة والصوت. الملفات المؤقتة: $found. جرّب جودة فيديو أخرى."
+                }
+                throw IllegalStateException(message)
+            }
+        if (result.length() <= 0L) throw IllegalStateException("الملف الناتج فارغ.")'''
+          if old_result not in s:
+              raise SystemExit("Output-file validation patch did not match the source.")
+          s = s.replace(old_result, new_result, 1)
+          p.write_text(s)
+          PY
+      - name: Upload patched source project
+        uses: actions/upload-artifact@v4
+        with:
+          name: FastDownload-1.1.2-source-project
+          path: FastDownload/
+          retention-days: 7
       - name: Build debug APK
         run: gradle --no-daemon -p FastDownload assembleDebug
       - name: Verify APK signature
@@ -93,6 +155,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: FastDownload-1.1.1-debug-apk-arm
+          name: FastDownload-1.1.2-debug-apk-arm
           path: FastDownload/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
