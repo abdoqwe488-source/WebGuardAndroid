@@ -41,6 +41,12 @@ jobs:
           base64 --decode FastDownload-v1.1.1-source.tar.xz.b64 > FastDownload-v1.1.1-source.tar.xz
           tar -xJf FastDownload-v1.1.1-source.tar.xz -C .
           test -f FastDownload/app/build.gradle
+      - name: Upload reconstructed source for diagnosis
+        uses: actions/upload-artifact@v4
+        with:
+          name: FastDownload-source-diagnostic
+          path: FastDownload/
+          retention-days: 1
       - name: Apply Android compatibility, size, and metadata fixes
         shell: bash
         run: |
