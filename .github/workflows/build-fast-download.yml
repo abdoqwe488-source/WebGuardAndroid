@@ -123,7 +123,9 @@ jobs:
               '            .maxByOrNull { it.lastModified() }',
               '            ?: throw IllegalStateException(if (audio)',
               '                "تعذر إنشاء ملف MP3 بعد التحويل."',
-              '            else "لم يتم إنشاء فيديو MP4 يحتوي على الصورة والصوت. جرّب جودة فيديو أخرى.")'
+              '            else "لم يتم إنشاء فيديو MP4 يحتوي على الصورة والصوت. جرّب جودة فيديو أخرى.")',
+              '        val finalSizeBytes = result.length()',
+              '        if (finalSizeBytes <= 0L) throw IllegalStateException("الملف الناتج فارغ.")'
           ])
           s = s[:block_start] + new_result_block + "\n" + s[block_end:]
           p.write_text(s)
