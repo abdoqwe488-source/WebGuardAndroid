@@ -48,31 +48,76 @@ jobs:
           grep -q "versionName '1.1.3'" FastDownload/app/build.gradle
           grep -q 'verifyMediaFile(result, requireVideo = !audio)' FastDownload/app/src/main/java/com/fastdownload/app/MainActivity.kt
 
-      - name: Package missing Expat runtime dependency for FFprobe
+      - name: Replace FFprobe-based validation with Android MediaExtractor
         shell: bash
         run: |
-          set -euo pipefail
-          BASE="https://packages-cf.termux.dev/apt/termux-main/pool/main/libe/libexpat"
-          mkdir -p /tmp/expat-aarch64 /tmp/expat-arm
-          curl -fL --retry 3 "$BASE/libexpat_2.10.0_aarch64.deb" -o /tmp/libexpat-aarch64.deb
-          curl -fL --retry 3 "$BASE/libexpat_2.10.0_arm.deb" -o /tmp/libexpat-arm.deb
-          dpkg-deb -x /tmp/libexpat-aarch64.deb /tmp/expat-aarch64
-          dpkg-deb -x /tmp/libexpat-arm.deb /tmp/expat-arm
-          EXPAT64="$(find /tmp/expat-aarch64 -type f -name 'libexpat.so.1.*' | head -n1)"
-          EXPAT32="$(find /tmp/expat-arm -type f -name 'libexpat.so.1.*' | head -n1)"
-          test -n "$EXPAT64" && test -f "$EXPAT64"
-          test -n "$EXPAT32" && test -f "$EXPAT32"
-          mkdir -p FastDownload/app/src/main/jniLibs/arm64-v8a FastDownload/app/src/main/jniLibs/armeabi-v7a
-          cp "$EXPAT64" FastDownload/app/src/main/jniLibs/arm64-v8a/libexpat.so.1
-          cp "$EXPAT32" FastDownload/app/src/main/jniLibs/armeabi-v7a/libexpat.so.1
-          # Bump app version so Android updates 1.1.3 in place.
-          sed -i "s/versionCode 5/versionCode 6/; s/versionName '1.1.3'/versionName '1.1.4'/" FastDownload/app/build.gradle
-          file FastDownload/app/src/main/jniLibs/arm64-v8a/libexpat.so.1 FastDownload/app/src/main/jniLibs/armeabi-v7a/libexpat.so.1
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("FastDownload/app/src/main/java/com/fastdownload/app/MainActivity.kt")
+          s = p.read_text()
+          call = "verifyMediaFile(result, requireVideo = !audio)"
+          if s.count(call) != 1:
+              raise SystemExit(f"Expected one output-verification call, found {s.count(call)}")
+          s = s.replace(call, "verifyMediaFileWithMediaExtractor(result, requireVideo = !audio)", 1)
+
+          method = '''
+              // Validate the saved file with Android's own media parser.
+              // This avoids launching the bundled FFprobe executable and its
+              // missing transitive Termux/Expat dependency on some devices.
+              private fun verifyMediaFileWithMediaExtractor(file: java.io.File, requireVideo: Boolean) {
+                  if (!file.isFile || file.length() <= 0L) {
+                      throw IllegalStateException("الملف الناتج غير موجود أو فارغ.")
+                  }
+                  val extractor = android.media.MediaExtractor()
+                  try {
+                      extractor.setDataSource(file.absolutePath)
+                      var hasVideo = false
+                      var hasAudio = false
+                      for (index in 0 until extractor.trackCount) {
+                          val mime = extractor.getTrackFormat(index)
+                              .getString(android.media.MediaFormat.KEY_MIME)
+                              .orEmpty()
+                          if (mime.startsWith("video/")) hasVideo = true
+                          if (mime.startsWith("audio/")) hasAudio = true
+                      }
+                      if (requireVideo && !hasVideo) {
+                          throw IllegalStateException("الفيديو الناتج لا يحتوي على مسار صورة.")
+                      }
+                      if (!requireVideo && !hasAudio) {
+                          throw IllegalStateException("الملف الصوتي الناتج لا يحتوي على مسار صوت.")
+                      }
+                  } catch (e: Exception) {
+                      if (e is IllegalStateException &&
+                          (e.message?.contains("لا يحتوي على مسار") == true)) throw e
+                      throw IllegalStateException("تعذر قراءة مسارات الوسائط في الملف الناتج: ${e.message}", e)
+                  } finally {
+                      extractor.release()
+                  }
+              }
+          '''
+          # Insert immediately before the last class-closing brace.
+          close = s.rfind("}")
+          if close < 0:
+              raise SystemExit("Could not find MainActivity class closing brace.")
+          s = s[:close] + method + "\n" + s[close:]
+
+          # Increment the app version to install as an update over 1.1.3.
+          p.write_text(s)
+          g = Path("FastDownload/app/build.gradle")
+          gradle = g.read_text()
+          gradle = gradle.replace("versionCode 5", "versionCode 6", 1)
+          gradle = gradle.replace("versionName '1.1.3'", "versionName '1.1.4'", 1)
+          if "versionCode 6" not in gradle or "versionName '1.1.4'" not in gradle:
+              raise SystemExit("Could not bump version to 1.1.4.")
+          g.write_text(gradle)
+          PY
+          grep -q 'verifyMediaFileWithMediaExtractor(result, requireVideo = !audio)' FastDownload/app/src/main/java/com/fastdownload/app/MainActivity.kt
+          grep -q 'MediaExtractor' FastDownload/app/src/main/java/com/fastdownload/app/MainActivity.kt
 
       - name: Build debug APK
         run: gradle --no-daemon -p FastDownload assembleDebug
 
-      - name: Validate APK structure, ABIs, and FFprobe dependency
+      - name: Validate APK structure and supported ABIs
         shell: bash
         run: |
           set -euo pipefail
@@ -82,10 +127,6 @@ jobs:
           unzip -l "$APK" | grep -q 'lib/armeabi-v7a/libffprobe.so'
           unzip -l "$APK" | grep -q 'lib/arm64-v8a/libffmpeg.zip.so'
           unzip -l "$APK" | grep -q 'lib/armeabi-v7a/libffmpeg.zip.so'
-          # The missing transitive dependency must be packaged at the exact soname
-          # expected by libfontconfig/libffprobe for both supported ABIs.
-          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libexpat.so.1'
-          unzip -l "$APK" | grep -q 'lib/armeabi-v7a/libexpat.so.1'
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n1)"
           "$AAPT" dump badging "$APK" | grep -q "package: name='com.fastdownload.app' versionCode='6' versionName='1.1.4'"
           "$AAPT" dump badging "$APK" | grep -q "sdkVersion:'24'"
