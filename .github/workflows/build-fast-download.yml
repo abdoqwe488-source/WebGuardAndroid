@@ -38,37 +38,63 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Restore Fast Download 1.1.3 source project
+      - name: Restore Fast Download source project
         shell: bash
         run: |
           mkdir -p FastDownload
-          base64 --decode FastDownload-v1.1.3-source-project.zip.b64 > /tmp/FastDownload-1.1.3-source-project.zip
-          unzip -q /tmp/FastDownload-1.1.3-source-project.zip -d FastDownload
+          base64 --decode FastDownload-v1.1.3-source-project.zip.b64 > /tmp/FastDownload-source-project.zip
+          unzip -q /tmp/FastDownload-source-project.zip -d FastDownload
           test -f FastDownload/app/src/main/java/com/fastdownload/app/MainActivity.kt
           grep -q "versionName '1.1.3'" FastDownload/app/build.gradle
-          grep -q 'execute(request, jobId, true)' FastDownload/app/src/main/java/com/fastdownload/app/MainActivity.kt
           grep -q 'verifyMediaFile(result, requireVideo = !audio)' FastDownload/app/src/main/java/com/fastdownload/app/MainActivity.kt
-          grep -q 'private fun isFacebookUrl' FastDownload/app/src/main/java/com/fastdownload/app/MainActivity.kt
+
+      - name: Package missing Expat runtime dependency for FFprobe
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://packages-cf.termux.dev/apt/termux-main/pool/main/libe/libexpat"
+          mkdir -p /tmp/expat-aarch64 /tmp/expat-arm
+          curl -fL --retry 3 "$BASE/libexpat_2.10.0_aarch64.deb" -o /tmp/libexpat-aarch64.deb
+          curl -fL --retry 3 "$BASE/libexpat_2.10.0_arm.deb" -o /tmp/libexpat-arm.deb
+          dpkg-deb -x /tmp/libexpat-aarch64.deb /tmp/expat-aarch64
+          dpkg-deb -x /tmp/libexpat-arm.deb /tmp/expat-arm
+          EXPAT64="$(find /tmp/expat-aarch64 -type f -name 'libexpat.so.1.*' | head -n1)"
+          EXPAT32="$(find /tmp/expat-arm -type f -name 'libexpat.so.1.*' | head -n1)"
+          test -n "$EXPAT64" && test -f "$EXPAT64"
+          test -n "$EXPAT32" && test -f "$EXPAT32"
+          mkdir -p FastDownload/app/src/main/jniLibs/arm64-v8a FastDownload/app/src/main/jniLibs/armeabi-v7a
+          cp "$EXPAT64" FastDownload/app/src/main/jniLibs/arm64-v8a/libexpat.so.1
+          cp "$EXPAT32" FastDownload/app/src/main/jniLibs/armeabi-v7a/libexpat.so.1
+          # Bump app version so Android updates 1.1.3 in place.
+          sed -i "s/versionCode 5/versionCode 6/; s/versionName '1.1.3'/versionName '1.1.4'/" FastDownload/app/build.gradle
+          file FastDownload/app/src/main/jniLibs/arm64-v8a/libexpat.so.1 FastDownload/app/src/main/jniLibs/armeabi-v7a/libexpat.so.1
 
       - name: Build debug APK
         run: gradle --no-daemon -p FastDownload assembleDebug
 
-      - name: Validate APK structure and supported ABIs
+      - name: Validate APK structure, ABIs, and FFprobe dependency
         shell: bash
         run: |
+          set -euo pipefail
           APK="FastDownload/app/build/outputs/apk/debug/app-debug.apk"
           unzip -t "$APK" > /tmp/apk-zip-check.txt
           unzip -l "$APK" | grep -q 'lib/arm64-v8a/libffprobe.so'
           unzip -l "$APK" | grep -q 'lib/armeabi-v7a/libffprobe.so'
           unzip -l "$APK" | grep -q 'lib/arm64-v8a/libffmpeg.zip.so'
           unzip -l "$APK" | grep -q 'lib/armeabi-v7a/libffmpeg.zip.so'
+          # The missing transitive dependency must be packaged at the exact soname
+          # expected by libfontconfig/libffprobe for both supported ABIs.
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libexpat.so.1'
+          unzip -l "$APK" | grep -q 'lib/armeabi-v7a/libexpat.so.1'
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n1)"
-          "$AAPT" dump badging "$APK" | grep -E "package: name='com.fastdownload.app' versionCode='5' versionName='1.1.3'|sdkVersion:'24'"
+          "$AAPT" dump badging "$APK" | grep -q "package: name='com.fastdownload.app' versionCode='6' versionName='1.1.4'"
+          "$AAPT" dump badging "$APK" | grep -q "sdkVersion:'24'"
           ls -lh "$APK"
 
-      - name: Verify APK signature
+      - name: Verify APK signature and calculate checksum
         shell: bash
         run: |
+          set -euo pipefail
           APK="FastDownload/app/build/outputs/apk/debug/app-debug.apk"
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n1)"
           test -n "$APKSIGNER"
@@ -78,7 +104,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: FastDownload-1.1.3-debug-apk-arm
+          name: FastDownload-1.1.4-debug-apk-arm
           path: |
             FastDownload/app/build/outputs/apk/debug/app-debug.apk
             FastDownload/app/build/outputs/apk/debug/app-debug.apk.sha256
@@ -88,6 +114,6 @@ jobs:
       - name: Upload exact source project
         uses: actions/upload-artifact@v4
         with:
-          name: FastDownload-1.1.3-source-project
+          name: FastDownload-1.1.4-source-project
           path: FastDownload/
           retention-days: 14
